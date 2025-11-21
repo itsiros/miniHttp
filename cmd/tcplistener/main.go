@@ -18,14 +18,16 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 		for {
 
 			buf := make([]byte, 8)
-			n, er := io.ReadFull(f, buf)
-			if er == io.EOF {
+			n, er := f.Read(buf)
+
+			if er == io.ErrUnexpectedEOF || er == io.ErrShortWrite {
 				break
 			}
 
-			line += string(buf[:n])
-			if er == io.ErrUnexpectedEOF {
-				ch <- line
+			if er == io.EOF {
+				if len(line) > 0 {
+					ch <- line
+				}
 				break
 			}
 
@@ -33,6 +35,7 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 				panic(er)
 			}
 
+			line += string(buf[:n])
 			for {
 				i := strings.IndexRune(line, '\n')
 				if i == -1 {
@@ -61,12 +64,10 @@ func main() {
 			panic(er)
 		}
 
-		fmt.Println("New connection established!")
 		ch := getLinesChannel(fd)
 		for chunk := range ch {
 			fmt.Print(chunk)
 		}
-		fmt.Println("connection closed")
 		fd.Close()
 	}
 }
