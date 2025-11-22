@@ -3,13 +3,49 @@ package request
 import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"io"
+	"math/rand"
 	"strings"
 	"testing"
+	"time"
 )
+
+type chunkReader struct {
+	data            string
+	numBytesPerRead int
+	pos             int
+}
+
+func (cr *chunkReader) Read(p []byte) (n int, err error) {
+	if cr.pos >= len(cr.data) {
+		return 0, io.EOF
+	}
+	endIndex := cr.pos + cr.numBytesPerRead
+	if endIndex > len(cr.data) {
+		endIndex = len(cr.data)
+	}
+	n = copy(p, cr.data[cr.pos:endIndex])
+	cr.pos += n
+	return n, nil
+}
+
+// wrapWithRandomChunks wraps the string in a chunkReader with random chunk size
+func wrapWithRandomChunks(s string) io.Reader {
+	// create a local rand source
+	src := rand.NewSource(time.Now().UnixNano())
+	r := rand.New(src)
+
+	chunkSize := r.Intn(10) + 1 // 1..10 bytes per Read
+
+	return &chunkReader{
+		data:            s,
+		numBytesPerRead: chunkSize,
+	}
+}
 
 func TestRequestLineParse(t *testing.T) {
 	// Test: Good GET Request line
-	r, err := RequestFromReader(strings.NewReader("GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n"))
+	r, err := RequestFromReader(wrapWithRandomChunks("GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n"))
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.Equal(t, "GET", r.RequestLine.Method)
@@ -17,7 +53,7 @@ func TestRequestLineParse(t *testing.T) {
 	assert.Equal(t, "1.1", r.RequestLine.HttpVersion)
 
 	// Test: Good GET Request line with path
-	r, err = RequestFromReader(strings.NewReader("GET /coffee HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n"))
+	r, err = RequestFromReader(wrapWithRandomChunks("GET /coffee HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n"))
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.Equal(t, "GET", r.RequestLine.Method)
@@ -25,6 +61,114 @@ func TestRequestLineParse(t *testing.T) {
 	assert.Equal(t, "1.1", r.RequestLine.HttpVersion)
 
 	// Test: Invalid number of parts in request line
-	_, err = RequestFromReader(strings.NewReader("/coffee HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n"))
+	_, err = RequestFromReader(wrapWithRandomChunks("/coffee HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n"))
 	require.Error(t, err)
+
+	// --- Test: Good GET Request line ---
+	r, err = RequestFromReader(wrapWithRandomChunks(
+		"GET / HTTP/1.1\r\nHost: localhost:42069\r\n\r\n",
+	))
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "GET", r.RequestLine.Method)
+	assert.Equal(t, "/", r.RequestLine.RequestTarget)
+	assert.Equal(t, "1.1", r.RequestLine.HttpVersion)
+
+	// --- Test: Good GET Request line with path ---
+	r, err = RequestFromReader(wrapWithRandomChunks(
+		"GET /coffee HTTP/1.1\r\nHost: localhost:42069\r\n\r\n",
+	))
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "GET", r.RequestLine.Method)
+	assert.Equal(t, "/coffee", r.RequestLine.RequestTarget)
+	assert.Equal(t, "1.1", r.RequestLine.HttpVersion)
+
+	// --- Test: Invalid number of parts in request line ---
+	_, err = RequestFromReader(wrapWithRandomChunks(
+		"/coffee HTTP/1.1\r\nHost: localhost:42069\r\n\r\n",
+	))
+	require.Error(t, err)
+
+	// === ADDITIONAL TESTS BELOW ===
+
+	// --- Test: Empty request line ---
+	_, err = RequestFromReader(wrapWithRandomChunks(
+		"\r\n",
+	))
+	require.Error(t, err)
+
+	// --- Test: Method missing ---
+	_, err = RequestFromReader(wrapWithRandomChunks(
+		" / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+	))
+	require.Error(t, err)
+
+	// --- Test: Path missing ---
+	_, err = RequestFromReader(wrapWithRandomChunks(
+		"GET  HTTP/1.1\r\nHost: localhost\r\n\r\n",
+	))
+	require.Error(t, err)
+
+	// --- Test: Version missing ---
+	_, err = RequestFromReader(wrapWithRandomChunks(
+		"GET / \r\nHost: test\r\n\r\n",
+	))
+	require.Error(t, err)
+
+	// --- Test: Wrong HTTP version (missing HTTP/) ---
+	_, err = RequestFromReader(wrapWithRandomChunks(
+		"GET / 1.1\r\nHost: test\r\n\r\n",
+	))
+	require.Error(t, err)
+
+	// --- Test: Wrong HTTP version syntax ---
+	_, err = RequestFromReader(wrapWithRandomChunks(
+		"GET / HTTP/x.y\r\nHost: test\r\n\r\n",
+	))
+	require.Error(t, err)
+
+	// --- Test: Extra spaces between parts ---
+	r, err = RequestFromReader(wrapWithRandomChunks(
+		"GET     /coffee     HTTP/1.1\r\nHost: localhost\r\n\r\n",
+	))
+	require.NoError(t, err)
+	assert.Equal(t, "GET", r.RequestLine.Method)
+	assert.Equal(t, "/coffee", r.RequestLine.RequestTarget)
+	assert.Equal(t, "1.1", r.RequestLine.HttpVersion)
+
+	// --- Test: Request target containing query ---
+	r, err = RequestFromReader(wrapWithRandomChunks(
+		"GET /search?q=coffee HTTP/1.1\r\nHost: localhost\r\n\r\n",
+	))
+	require.NoError(t, err)
+	assert.Equal(t, "/search?q=coffee", r.RequestLine.RequestTarget)
+
+	// --- Test: Request line too long ---
+	_, err = RequestFromReader(wrapWithRandomChunks(
+		"GET " + strings.Repeat("x", 10000) + " HTTP/1.1\r\nHost: localhost\r\n\r\n",
+	))
+	require.Error(t, err)
+
+	// --- Test: CRLF strictly required ---
+	_, err = RequestFromReader(wrapWithRandomChunks(
+		"GET / HTTP/1.1\nHost: localhost\n\n",
+	))
+	require.Error(t, err)
+
+	// --- Test: Valid POST request ---
+	r, err = RequestFromReader(wrapWithRandomChunks(
+		"POST /form HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello",
+	))
+	require.NoError(t, err)
+	assert.Equal(t, "POST", r.RequestLine.Method)
+
+	// --- Test: HEAD request ---
+	r, err = RequestFromReader(wrapWithRandomChunks(
+		"HEAD /ping HTTP/1.1\r\nHost: localhost\r\n\r\n",
+	))
+	require.NoError(t, err)
+	assert.Equal(t, "HEAD", r.RequestLine.Method)
+	assert.Equal(t, "/ping", r.RequestLine.RequestTarget)
 }
+
