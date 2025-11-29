@@ -3,13 +3,23 @@ package request
 import (
 	"fmt"
 	"io"
-	"os"
+	// "os"
 	"strings"
 	"unicode"
 )
 
+const bufferSize int = 8
+
+type parseState int
+
+const (
+	INITIALIZED = iota
+	DONE
+)
+
 type Request struct {
 	RequestLine RequestLine
+	parseState  parseState
 }
 
 type RequestLine struct {
@@ -27,62 +37,125 @@ func isKeywordCapitalized(key string) bool {
 	return true
 }
 
-func parseRequestLine(line string) ([]string, error) {
+func (r *Request) parse(data []byte) (int, error) {
 
-	if line == "" {
-		return nil, fmt.Errorf("Empty string")
+	if r.parseState == DONE {
+		return -1, fmt.Errorf("error: trying to read data in DONE state")
+	}
+	if r.parseState != INITIALIZED {
+		return -2, fmt.Errorf("error: unknown state")
 	}
 
-	split := strings.Fields(line)
-
-	if len(split) != 3 {
-		return nil, fmt.Errorf("Invalid request")
+	bytesRead, err := parseRequestLine(string(data), r)
+	if err != nil {
+		return -3, err
 	}
 
-	if !isKeywordCapitalized(split[0]) || !isKeywordCapitalized(split[2]) {
-		return nil, fmt.Errorf("Not all letters are capitalized: %s", line)
+	if bytesRead == 0 {
+		return 0, nil
 	}
 
-	if split[0] != "GET" && split[0] != "POST" && split[0] != "HEAD" {
-		return nil, fmt.Errorf("No method specified")
+	r.parseState = DONE
+	return bytesRead, nil
+}
+
+func parseRequestLine(line string, r *Request) (int, error) {
+
+	idx := strings.Index(line, "\r\n")
+	if idx == -1 {
+		return 0, nil
 	}
 
-	if split[1][0] != '/' {
-		return nil, fmt.Errorf("No request target")
+	requestLine := line[:idx]
+
+	parts := strings.Fields(requestLine)
+
+	if len(parts) != 3 {
+		return 0, fmt.Errorf("Invalid request: %q", requestLine)
 	}
 
-	if strings.Compare(split[2], "HTTP/1.1") != 0 {
-		return nil, fmt.Errorf("Wrong HTTP version requested")
+	method, target, version := parts[0], parts[1], parts[2]
+
+	if !isKeywordCapitalized(method) || !isKeywordCapitalized(version) {
+		return 0, fmt.Errorf("version or method are not capitalized: %s", line)
 	}
 
-	return split, nil
+	if method != "GET" && method != "POST" && method != "HEAD" {
+		return 0, fmt.Errorf("wrong method or non existand: %s", method)
+	}
+
+	if !strings.HasPrefix(target, "/") {
+		return 0, fmt.Errorf("Invalid target: %s", target)
+	}
+
+	if version != "HTTP/1.1" {
+		return 0, fmt.Errorf("Wrong HTTP version requested: %s", version)
+	}
+
+	r.RequestLine.Method = method
+	r.RequestLine.RequestTarget = target
+	r.RequestLine.HttpVersion = "1.1"
+
+	return idx + 2, nil
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
 
-	buf, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
-	}
+	buf := make([]byte, bufferSize)
+	readToIndex := 0
 
-	request := strings.Split(string(buf), "\r\n")
-	if len(request) == 0 || request[0] == "" {
-		return nil, fmt.Errorf("empty request")
-	}
+	r := &Request{parseState: INITIALIZED}
 
-	info, parseErr := parseRequestLine(request[0])
-	if parseErr != nil {
-		fmt.Fprintln(os.Stderr, parseErr)
-		return nil, parseErr
-	}
+	for r.parseState != DONE {
 
-	baby := Request{
-		RequestLine: RequestLine{
-			Method:        info[0],
-			RequestTarget: info[1],
-			HttpVersion:   info[2][5:],
-		},
-	}
+		if readToIndex == len(buf) {
+			newBuf := make([]byte, 2*len(buf))
+			copy(newBuf, buf)
+			buf = newBuf
+		}
 
-	return &baby, nil
+		n, err := reader.Read(buf[readToIndex:])
+		if err != nil {
+			return nil, err
+		}
+
+		if err == io.EOF {
+			r.parseState = DONE
+			break
+		}
+
+		readToIndex += n
+		consumed, parseErr := r.parse(buf[:readToIndex])
+		if parseErr != nil {
+			return nil, parseErr
+		}
+
+		if consumed > 0 {
+			copy(buf, buf[consumed:readToIndex])
+			readToIndex -= consumed
+		}
+	}
+	return r, nil
 }
+
+// 	request := strings.parts(string(buf), "\r\n")
+// 	if len(request) == 0 || request[0] == "" {
+// 		return nil, fmt.Errorf("empty request")
+// 	}
+//
+// 	info, parseErr := parseRequestLine(request[0])
+// 	if parseErr != nil {
+// 		fmt.Fprintln(os.Stderr, parseErr)
+// 		return nil, parseErr
+// 	}
+//
+// 	baby := Request{
+// 		RequestLine: RequestLine{
+// 			Method:        info[0],
+// 			RequestTarget: info[1],
+// 			HttpVersion:   info[2][5:],
+// 		},
+// 	}
+//
+// 	return &baby, nil
+// }
