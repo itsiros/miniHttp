@@ -1,0 +1,85 @@
+package headers
+
+import (
+	"bytes"
+	"errors"
+	"strings"
+)
+
+const crlf = "\r\n"
+
+type Headers map[string]string
+
+func NewHeaders() Headers {
+	return make(Headers)
+}
+
+func isValidValue(s string) bool {
+	for _, c := range s {
+		switch {
+		case c == 127:
+		case c >= 0 && c <= 31:
+		default:
+			return true
+		}
+
+	}
+	return false
+}
+
+func isValidKey(s string) bool {
+	for _, c := range s {
+		switch {
+		case c == 32 || c == 33 || (c >= 35 && c <= 39) || c == 42 || c == 45 || c == 46 || c == 124 || c == 126:
+		case c >= 48 && c <= 57: // 0-9
+		case c >= 65 && c <= 90: // A-Z
+		case c >= 94 && c <= 122: // ^-z
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (h Headers) Parse(data []byte) (n int, done bool, err error) {
+
+	if string(data) == crlf {
+		return n, true, nil
+	}
+
+	for string(data) != crlf {
+
+		idx := bytes.Index(data, []byte(crlf))
+		if idx == -1 {
+			return n, false, nil
+		}
+
+		line := string(data[:idx])
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			return n, false, errors.New("invalid header: missing colon")
+		}
+
+		if !isValidKey(parts[0]) || !isValidValue(parts[1]) {
+			return n, false, errors.New("invalid characters found")
+		}
+
+		key := strings.TrimSpace(strings.ToLower(parts[0]))
+		value := strings.TrimSpace(parts[1])
+
+		colonIdx := strings.Index(line, ":")
+		if colonIdx > 0 && line[colonIdx-1] == ' ' {
+			return n, false, errors.New("invalid spacing before colon")
+		}
+
+		if key == "" {
+			return n, false, errors.New("empty header key")
+		}
+
+		h[key] = value
+		data = data[idx+2:]
+		n += idx + 2
+	}
+
+	return n, false, nil
+}
