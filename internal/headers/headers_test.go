@@ -102,6 +102,7 @@ func TestParseHeaders(t *testing.T) {
 	data = []byte("Host: localhost69420\r\nSet-Person: lane-loves-go\r\nSet-Person: prime-loves-zig\r\nSet-Person: tj-loves-ocaml\r\n\r\n")
 	n, done, err = h.Parse(data)
 	require.NoError(t, err)
+	assert.Equal(t, "lane-loves-go, prime-loves-zig, tj-loves-ocaml", h["set-person"])
 	require.Equal(t, 106, n)
 	assert.False(t, done)
 }
