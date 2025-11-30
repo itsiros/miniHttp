@@ -2,6 +2,7 @@ package request
 
 import (
 	"fmt"
+	"github.com/tsironi93/miniHttp/internal/headers"
 	"io"
 	"strings"
 	"unicode"
@@ -14,13 +15,14 @@ type parseState int
 
 const (
 	INITIALIZED = iota
+	PARSING_HEADERS
 	DONE
 )
 
 type Request struct {
 	RequestLine RequestLine
-	// parseState  parseState
-	State State
+	Headers     headers.Headers
+	State       State
 }
 
 type State struct {
@@ -50,21 +52,47 @@ func (r *Request) parse(data []byte) (int, error) {
 		return -1, fmt.Errorf("error: trying to read data in DONE state")
 	}
 
-	if r.State.parseState != INITIALIZED {
+	if r.State.parseState != INITIALIZED && r.State.parseState != PARSING_HEADERS {
 		return -2, fmt.Errorf("error: unknown state")
 	}
 
-	bytesRead, err := parseRequestLine(string(data), r)
-	if err != nil {
-		return -3, err
+	totalBytes := 0
+
+	if r.State.parseState == INITIALIZED {
+		reqBytes, err := parseRequestLine(string(data), r)
+		if err != nil {
+			return -3, err
+		}
+
+		if reqBytes == 0 {
+			return 0, nil
+		}
+
+		totalBytes += reqBytes
+		r.State.parseState = PARSING_HEADERS
+		return totalBytes, nil
 	}
 
-	if bytesRead == 0 {
-		return 0, nil
+	for r.State.parseState != DONE {
+
+		headBytes, done, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+
+		if done {
+			r.State.parseState = DONE
+		}
+
+		if headBytes == 0 && !done {
+			break
+		}
+
+		totalBytes += headBytes
+		data = data[headBytes:]
 	}
 
-	r.State.parseState = DONE
-	return bytesRead, nil
+	return totalBytes, nil
 }
 
 func parseRequestLine(line string, r *Request) (int, error) {
@@ -117,6 +145,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			dataRead:   0,
 			dataParced: 0,
 		},
+		Headers: headers.NewHeaders(),
 	}
 
 	for r.State.parseState != DONE {
@@ -128,13 +157,12 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 
 		n, err := reader.Read(buf[readToIndex:])
-		if err != nil {
+		if err == io.EOF && r.State.parseState != DONE {
 			return nil, err
 		}
 
-		if err == io.EOF {
-			r.State.parseState = DONE
-			break
+		if err != nil {
+			return nil, err
 		}
 
 		readToIndex += n

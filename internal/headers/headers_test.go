@@ -16,8 +16,8 @@ func TestParseHeaders(t *testing.T) {
 		n, done, err := h.Parse(data)
 		require.NoError(t, err)
 		assert.Equal(t, "localhost:42069", h["host"])
-		assert.Equal(t, 23, n)
-		assert.False(t, done)
+		assert.Equal(t, 25, n)
+		assert.True(t, done)
 	})
 
 	t.Run("Valid 2 headers with existing headers", func(t *testing.T) {
@@ -33,8 +33,8 @@ func TestParseHeaders(t *testing.T) {
 		assert.Equal(t, "example.com", h["host"])
 		assert.Equal(t, "*/*", h["accept"])
 		assert.Equal(t, "curl/8.0", h["User-Agent"])
-		assert.Equal(t, len(data)-2, n)
-		assert.False(t, done)
+		assert.Equal(t, len(data), n)
+		assert.True(t, done)
 	})
 
 	t.Run("Valid done", func(t *testing.T) {
@@ -43,7 +43,7 @@ func TestParseHeaders(t *testing.T) {
 
 		n, done, err := h.Parse(data)
 		require.NoError(t, err)
-		assert.Equal(t, 0, n)
+		assert.Equal(t, 2, n)
 		assert.True(t, done)
 	})
 
@@ -62,8 +62,8 @@ func TestParseHeaders(t *testing.T) {
 	n, done, err := h.Parse(data)
 	require.NoError(t, err)
 	assert.Equal(t, "example.com", h["host"]) // key is lowercase
-	assert.Equal(t, 19, n)
-	assert.False(t, done)
+	assert.Equal(t, 21, n)
+	assert.True(t, done)
 
 	// Test: Key with invalid '@' character (ASCII 64)
 	h = NewHeaders()
@@ -87,7 +87,7 @@ func TestParseHeaders(t *testing.T) {
 	n, done, err = h.Parse(data)
 	require.NoError(t, err)
 	assert.Equal(t, "text/html", h["conten^t-type"])
-	assert.False(t, done)
+	assert.True(t, done)
 
 	// Test: Empty key
 	h = NewHeaders()
@@ -103,6 +103,6 @@ func TestParseHeaders(t *testing.T) {
 	n, done, err = h.Parse(data)
 	require.NoError(t, err)
 	assert.Equal(t, "lane-loves-go, prime-loves-zig, tj-loves-ocaml", h["set-person"])
-	require.Equal(t, 106, n)
-	assert.False(t, done)
+	require.Equal(t, 108, n)
+	assert.True(t, done)
 }

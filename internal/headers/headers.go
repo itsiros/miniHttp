@@ -26,7 +26,7 @@ func isValidValue(s string) bool {
 func isValidKey(s string) bool {
 	for _, c := range s {
 		switch {
-		case c == 32 || c == 33 || (c >= 35 && c <= 39) || c == 42 || c == 45 || c == 46 || c == 124 || c == 126:
+		case c == 33 || (c >= 35 && c <= 39) || c == 42 || c == 45 || c == 46 || c == 124 || c == 126:
 		case c >= 48 && c <= 57: // 0-9
 		case c >= 65 && c <= 90: // A-Z
 		case c >= 94 && c <= 122: // ^-z
@@ -39,15 +39,15 @@ func isValidKey(s string) bool {
 
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 
-	if string(data) == crlf {
-		return n, true, nil
-	}
-
-	for string(data) != crlf {
+	for len(data) > 0 {
 
 		idx := bytes.Index(data, []byte(crlf))
 		if idx == -1 {
 			return n, false, nil
+		}
+
+		if idx == 0 {
+			return n + 2, true, nil
 		}
 
 		line := string(data[:idx])
@@ -78,8 +78,9 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 		} else {
 			h[key] = value
 		}
-		data = data[idx+2:]
+
 		n += idx + 2
+		data = data[idx+2:]
 	}
 
 	return n, false, nil
