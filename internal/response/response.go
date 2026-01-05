@@ -52,16 +52,30 @@ func (w *Writer) Write(p []byte) (int, error) {
 	return w.Body.Write(p)
 }
 
-func (w *Writer) WriteResponse(out io.Writer) {
-	w.WriteStatusLine(out)
-	w.WriteHeaders(out)
-	w.WriteBody(out)
+func (w *Writer) WriteString(s string) (int, error) {
+	return w.Body.WriteString(s)
+}
+
+func (w *Writer) WriteResponse(out io.Writer) error {
+	if err := w.WriteStatusLine(out); err != nil {
+		return err
+	}
+
+	if err := w.WriteHeaders(out); err != nil {
+		return err
+	}
+
+	if _, err := w.WriteBody(out); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func GetDefaultHeaders() headers.Headers {
 	h := headers.NewHeaders()
 	h[Conn] = "close"
-	h[ContType] = "text/plain"
+	h[ContType] = "text/html"
 
 	return h
 }
@@ -122,5 +136,10 @@ func (w *Writer) WriteBody(out io.Writer) (int, error) {
 	}
 
 	n, err := out.Write(w.Body.Bytes())
-	return n, err
+	if err != nil {
+		return 0, err
+	}
+
+	w.state = stateBodyWritten
+	return n, nil
 }
